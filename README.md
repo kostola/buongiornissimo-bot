@@ -149,6 +149,13 @@ The project includes several convenience scripts for development and deployment:
 | `scripts/build.sh` | Build container image for the bot (supports both podman and docker) |
 | `scripts/run-container.sh` | Run container locally (loads from `.env` file, supports both podman and docker) |
 
+### Deployment
+
+| Script | Description |
+|--------|-------------|
+| `scripts/deploy-to-cloud-run.sh` | Deploy to Google Cloud Run with environment configuration |
+| `scripts/create-scheduler-job.sh` | Create Google Cloud Scheduler job for daily execution |
+
 ### Environment File
 
 The project uses a `.env` file for local development:
@@ -187,9 +194,27 @@ go build -o buongiornissimo-bot
 
 ## Deployment to Google Cloud
 
-### Option 1: Cloud Run + Cloud Scheduler
+### Cloud Run + Cloud Scheduler
 
-1. **Build and push container image:**
+1. **Create a service account and assign roles:**
+
+```bash
+# Create service account
+gcloud iam service-accounts create buongiornissimo-bot \
+  --display-name="Buongiornissimo Bot Service Account" \
+  --description="Service account for the Buongiornissimo Telegram Bot"
+
+# Assign necessary roles
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="serviceAccount:buongiornissimo-bot@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="serviceAccount:buongiornissimo-bot@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/aiplatform.user"
+```
+
+2. **Build and push container image:**
 
 ```bash
 # Build locally first (optional, for testing)
@@ -197,71 +222,36 @@ scripts/build.sh
 
 # Build and push to Google Container Registry
 gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/buongiornissimo-bot
+```
 
-# Deploy to Cloud Run
+3. **Deploy to Cloud Run:**
+
+```bash
 gcloud run deploy buongiornissimo-bot \
   --image gcr.io/YOUR_PROJECT_ID/buongiornissimo-bot \
   --platform managed \
   --region YOUR_REGION \
-  --set-env-vars TELEGRAM_BOT_TOKEN="your_token" \
-  --set-env-vars TELEGRAM_CHAT_IDS="your_chat_ids" \
-  --set-env-vars GEMINI_API_KEY="your_api_key" \
+  --service-account=buongiornissimo-bot@YOUR_PROJECT_ID.iam.gserviceaccount.com \
+  --set-env-vars TELEGRAM_BOT_TOKEN="your_bot_token" \
+  --set-env-vars TELEGRAM_CHAT_IDS="chat_id_1,chat_id_2" \
+  --set-env-vars TELEGRAM_ADMIN_CHAT_ID="admin_chat_id" \
+  --set-env-vars GEMINI_API_KEY="your_gemini_api_key" \
+  --set-env-vars INITIAL_PROMPT="your_custom_prompt" \
+  --set-env-vars TEXT_MODEL_ID="gemini-2.5-flash-lite" \
+  --set-env-vars IMAGE_MODEL_ID="imagen-4.0-generate-001" \
+  --set-env-vars MESSAGE_CAPTION="Buongiornissimo ☕" \
   --no-allow-unauthenticated
 ```
 
-2. **Create Cloud Scheduler job:**
+4. **Create Cloud Scheduler job:**
 
 ```bash
 gcloud scheduler jobs create http buongiornissimo-daily \
   --schedule="0 8 * * *" \
   --uri="https://YOUR_CLOUD_RUN_URL" \
   --http-method=POST \
-  --oidc-service-account-email=YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com \
+  --oidc-service-account-email=buongiornissimo-bot@YOUR_PROJECT_ID.iam.gserviceaccount.com \
   --time-zone="Europe/Rome"
-```
-
-### Option 2: Cloud Functions + Cloud Scheduler
-
-1. **Create a Cloud Function:**
-
-Modify the `main()` function to handle HTTP requests:
-
-```go
-package main
-
-import (
-    "net/http"
-    // ... other imports
-)
-
-func handler(w http.ResponseWriter, r *http.Request) {
-    // Your existing main() function logic here
-    fmt.Fprint(w, "Buongiornissimo sent successfully!")
-}
-
-func main() {
-    http.HandleFunc("/", handler)
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
-    http.ListenAndServe(":"+port, nil)
-}
-```
-
-2. **Deploy:**
-
-```bash
-gcloud functions deploy buongiornissimo \
-  --gen2 \
-  --runtime=go121 \
-  --region=YOUR_REGION \
-  --source=. \
-  --entry-point=handler \
-  --trigger=http \
-  --set-env-vars TELEGRAM_BOT_TOKEN="your_token" \
-  --set-env-vars TELEGRAM_CHAT_IDS="your_chat_ids" \
-  --set-env-vars GEMINI_API_KEY="your_api_key"
 ```
 
 ## Security Considerations
@@ -296,19 +286,20 @@ gcloud logs read --filter="resource.type=cloud_function AND resource.labels.func
 
 ```
 buongiornissimo-bot/
-├── main.go               # Main application code
-├── go.mod                # Go module dependencies
-├── go.sum                # Go module checksums
-├── Dockerfile            # Container build configuration
-├── .env.example          # Example environment file
-├── .gitignore            # Git ignore rules
-├── README.md             # This file
-└── scripts/              # Development and deployment scripts
-    ├── setup.sh          # Initial setup script
-    ├── test-local.sh     # Build and test locally
-    ├── run-local.sh      # Run pre-built binary locally
-    ├── build.sh          # Build container image (podman/docker)
-    └── run-container.sh  # Run container locally (podman/docker)
+├── main.go                       # Main application code
+├── go.mod                        # Go module dependencies
+├── go.sum                        # Go module checksums
+├── Dockerfile                    # Container build configuration
+├── LICENSE                       # MIT License file
+├── README.md                     # This file
+└── scripts/                      # Development and deployment scripts
+    ├── setup.sh                  # Initial setup script
+    ├── test-local.sh             # Build and test locally
+    ├── run-local.sh              # Run pre-built binary locally
+    ├── build.sh                  # Build container image (podman/docker)
+    ├── run-container.sh          # Run container locally (podman/docker)
+    ├── create-scheduler-job.sh   # Create Google Cloud Scheduler job
+    └── deploy-to-cloud-run.sh    # Deploy to Google Cloud Run
 ```
 
 ### Key Functions
@@ -320,7 +311,7 @@ buongiornissimo-bot/
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
